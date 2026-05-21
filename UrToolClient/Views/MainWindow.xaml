@@ -6,8 +6,8 @@
     xmlns:local="clr-namespace:UrToolClient.Views"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:views="clr-namespace:UrToolClient.Views"
-    Width="800"
-    Height="450"
+    Width="1440"
+    Height="1260"
     Background="#F4F4F5"
     mc:Ignorable="d">
 
@@ -231,6 +231,8 @@
                         Style="{StaticResource NavRadioButtonStyle}" />
 
                     <RadioButton
+                        Command="{Binding ChangePageCommand}"
+                        CommandParameter="VariablesView"
                         Content="▸  安装设置"
                         GroupName="NavMenu"
                         Style="{StaticResource NavRadioButtonStyle}" />
@@ -241,6 +243,8 @@
                         Style="{StaticResource NavRadioButtonStyle}" />
 
                     <RadioButton
+                        Command="{Binding ChangePageCommand}"
+                        CommandParameter="SimulationView"
                         Content="▸  3 D仿真(学习DH)"
                         GroupName="NavMenu"
                         Style="{StaticResource NavRadioButtonStyle}" />

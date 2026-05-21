@@ -29,6 +29,10 @@ namespace UrToolClient
                     services.AddSingleton<UrRobotControl>();
                     services.AddSingleton<CalibrationViewModel>();
                     services.AddSingleton<CalibrationPage>();
+                    services.AddSingleton<VariablesPage>();
+                    services.AddSingleton<VariablesViewModel>();
+                    services.AddSingleton<SimulationViewModel>(); // 保持后台状态
+                    services.AddSingleton<SimulationPage>();      // 与 ViewModel 同生命周期，避免 SceneNode 重复挂载
                 })
                 .ConfigureLogging(logger =>
                 {

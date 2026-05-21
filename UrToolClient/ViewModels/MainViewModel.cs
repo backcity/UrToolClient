@@ -1,5 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Threading;
@@ -14,7 +15,7 @@ namespace UrToolClient.ViewModels
     {
         private readonly UrRobotControl _urRobotControl;
         private readonly ILogger<MainViewModel> _logger;
-        private readonly CalibrationPage _calibrationPage;
+        private readonly IServiceProvider _serviceProvider;
 
         // ── 导航 ──────────────────────────────────────────────
         [ObservableProperty] private object? _currentView = null;
@@ -48,12 +49,12 @@ namespace UrToolClient.ViewModels
         [ObservableProperty] private double _jointWrist2;
         [ObservableProperty] private double _jointWrist3;
 
-        public MainViewModel(UrRobotControl urRobotControl, ILogger<MainViewModel> logger, CalibrationPage calibrationPage)
+        public MainViewModel(UrRobotControl urRobotControl, ILogger<MainViewModel> logger, IServiceProvider serviceProvider)
         {
-            _urRobotControl  = urRobotControl;
-            _logger          = logger;
-            _calibrationPage = calibrationPage;
-            CurrentView      = calibrationPage; // 默认显示仓位标定页
+            _urRobotControl = urRobotControl;
+            _logger = logger;
+            _serviceProvider = serviceProvider;
+            CurrentView = _serviceProvider.GetRequiredService<CalibrationPage>();
         }
 
         // ══════════════════════════════════════════════════════
@@ -113,7 +114,9 @@ namespace UrToolClient.ViewModels
         {
             CurrentView = pageName switch
             {
-                "CalibrationView" => _calibrationPage,
+                "CalibrationView" => _serviceProvider.GetRequiredService<CalibrationPage>(),
+                "VariablesView" => _serviceProvider.GetRequiredService<VariablesPage>(),
+                "SimulationView" => _serviceProvider.GetRequiredService<SimulationPage>(),
                 // 其他页面可以在这里添加分支
                 _ => CurrentView
             };
@@ -175,7 +178,7 @@ namespace UrToolClient.ViewModels
         {
             static double ToDeg(double r) => r * 180.0 / Math.PI;
             TcpX = _tcpBuf[0] * 1000; TcpY = _tcpBuf[1] * 1000; TcpZ = _tcpBuf[2] * 1000;
-            TcpRX = _tcpBuf[3] ; TcpRY = _tcpBuf[4] ; TcpRZ = _tcpBuf[5] ;
+            TcpRX = _tcpBuf[3]; TcpRY = _tcpBuf[4]; TcpRZ = _tcpBuf[5];
 
             JointBase = ToDeg(_jointBuf[0]); JointShoulder = ToDeg(_jointBuf[1]);
             JointElbow = ToDeg(_jointBuf[2]); JointWrist1 = ToDeg(_jointBuf[3]);
