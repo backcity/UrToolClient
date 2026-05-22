@@ -16,6 +16,7 @@ namespace UrToolClient.ViewModels
         private readonly UrRobotControl _urRobotControl;
         private readonly ILogger<MainViewModel> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly SimulationViewModel _simulationViewModel;
 
         // ── 导航 ──────────────────────────────────────────────
         [ObservableProperty] private object? _currentView = null;
@@ -49,11 +50,13 @@ namespace UrToolClient.ViewModels
         [ObservableProperty] private double _jointWrist2;
         [ObservableProperty] private double _jointWrist3;
 
-        public MainViewModel(UrRobotControl urRobotControl, ILogger<MainViewModel> logger, IServiceProvider serviceProvider)
+        public MainViewModel(UrRobotControl urRobotControl, ILogger<MainViewModel> logger,
+            IServiceProvider serviceProvider, SimulationViewModel simulationViewModel)
         {
             _urRobotControl = urRobotControl;
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _simulationViewModel = simulationViewModel;
             CurrentView = _serviceProvider.GetRequiredService<CalibrationPage>();
         }
 
@@ -183,6 +186,9 @@ namespace UrToolClient.ViewModels
             JointBase = ToDeg(_jointBuf[0]); JointShoulder = ToDeg(_jointBuf[1]);
             JointElbow = ToDeg(_jointBuf[2]); JointWrist1 = ToDeg(_jointBuf[3]);
             JointWrist2 = ToDeg(_jointBuf[4]); JointWrist3 = ToDeg(_jointBuf[5]);
+
+            // 将实时关节角同步到仿真视图（弧度原始值直接传入）
+            _simulationViewModel.ApplyJointAngles(_jointBuf);
         }
     }
 }

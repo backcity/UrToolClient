@@ -1,10 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System.Configuration;
-using System.Data;
 using System.Windows;
-using UrToolClient.Helper;
 using UrToolClient.Services;
 using UrToolClient.Services.Log;
 using UrToolClient.ViewModels;
@@ -51,9 +48,9 @@ namespace UrToolClient
 
             base.OnStartup(e);
 
-                var logger = AppHost.Services.GetRequiredService<ILogger<App>>();
+            var logger = AppHost.Services.GetRequiredService<ILogger<App>>();
 
-            await URHelper.OpenSetUpConfigAsync(@"C:\Users\27540\Desktop\default.variables");
+            // await URHelper.OpenSetUpConfigAsync(@"C:\Users\27540\Desktop\default.variables");
             logger.LogWarning("Application started");
 
 

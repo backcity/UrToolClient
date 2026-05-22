@@ -98,8 +98,10 @@
             CornerRadius="8">
             <hx:Viewport3DX
                 BackgroundColor="#27272A"
+                CameraRotationMode="Turntable"
                 EffectsManager="{Binding EffectsManager}"
                 EnableSwapChainRendering="True"
+                RotateAroundMouseDownPoint="True"
                 ShowCoordinateSystem="True">
                 <hx:Viewport3DX.Camera>
                     <hx:PerspectiveCamera

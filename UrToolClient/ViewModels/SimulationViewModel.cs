@@ -1,17 +1,13 @@
 ﻿
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using HelixToolkit.Geometry;
 using HelixToolkit.SharpDX;
 using HelixToolkit.SharpDX.Assimp;
-using HelixToolkit.SharpDX.Core;
 using HelixToolkit.Wpf.SharpDX;
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Numerics;
 using System.Windows;
 using System.Windows.Media.Media3D;
 using System.Xml.Linq;
@@ -28,16 +24,21 @@ namespace UrToolClient.ViewModels
 
         public ObservableCollection<RobotJoint> Joints { get; } = new();
 
+        public SimulationViewModel()
+        {
+            AddGroundPlane();
+        }
         [RelayCommand]
         private async Task LoadRobotAsync()
         {
             try
             {
-                // 1. 切回主线程清空 UI 绑定的集合
+                // 1. 切回主线程清空 UI 绑定的集合，并重建地面
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     SceneModels.Clear();
                     Joints.Clear();
+                    AddGroundPlane();
                 });
 
                 // 2. 解析本地路径
@@ -54,7 +55,76 @@ namespace UrToolClient.ViewModels
                 XDocument urdfDoc = XDocument.Load(urdfPath);
                 var importer = new Importer();
 
-                // 3. 筛选出所有旋转关节
+                // 3. 加载根连杆（base 连杆，不属于任何旋转关节的子连杆，需单独加载）
+                // 只在旋转关节的子连杆集内查找，避免 fixed 关节干扰判断
+                var revoluteChildLinks = new System.Collections.Generic.HashSet<string?>(
+                    urdfDoc.Descendants("joint")
+                           .Where(j => j.Attribute("type")?.Value == "revolute")
+                           .Select(j => j.Element("child")?.Attribute("link")?.Value));
+
+                string? rootLinkName = urdfDoc.Descendants("joint")
+                    .Where(j => j.Attribute("type")?.Value == "revolute")
+                    .Select(j => j.Element("parent")?.Attribute("link")?.Value)
+                    .FirstOrDefault(name => name != null && !revoluteChildLinks.Contains(name));
+
+                if (rootLinkName != null)
+                {
+                    var rootLinkEl = urdfDoc.Descendants("link").FirstOrDefault(l => l.Attribute("name")?.Value == rootLinkName);
+                    string? rootRosPath = rootLinkEl?.Element("visual")?.Element("geometry")?.Element("mesh")?.Attribute("filename")?.Value;
+                    if (!string.IsNullOrEmpty(rootRosPath))
+                    {
+                        string relPath = rootRosPath.Replace("package://", "").Replace("/", "\\");
+                        int mi = relPath.IndexOf("meshes");
+                        if (mi >= 0) relPath = relPath.Substring(mi);
+                        string localRootPath = Path.Combine(packageRoot, relPath);
+                        if (File.Exists(localRootPath))
+                        {
+                            var rootScene = await Task.Run(() => importer.Load(localRootPath));
+                            if (rootScene?.Root != null)
+                            {
+                                var rootModel = new SceneNodeGroupModel3D();
+
+                                // 沿 fixed-joint 链向上累积坐标系变换（与 UpdateKinematics 中旋转关节的处理方式保持一致）
+                                Matrix3D fixedChainMat = Matrix3D.Identity;
+                                string walkLink = rootLinkName;
+                                while (true)
+                                {
+                                    var parentFixedJoint = urdfDoc.Descendants("joint")
+                                        .FirstOrDefault(j => j.Attribute("type")?.Value == "fixed"
+                                                          && j.Element("child")?.Attribute("link")?.Value == walkLink);
+                                    if (parentFixedJoint == null) break;
+
+                                    var pjOrigin = parentFixedJoint.Element("origin");
+                                    double[] pjXyz = ParseStringArray(pjOrigin?.Attribute("xyz")?.Value, 3, new double[3]);
+                                    double[] pjRpy = ParseStringArray(pjOrigin?.Attribute("rpy")?.Value, 3, new double[3]);
+                                    Matrix3D pjMat = RpyToMatrix(pjRpy[0], pjRpy[1], pjRpy[2]);
+                                    pjMat.OffsetX = pjXyz[0]; pjMat.OffsetY = pjXyz[1]; pjMat.OffsetZ = pjXyz[2];
+                                    fixedChainMat = pjMat * fixedChainMat;
+
+                                    walkLink = parentFixedJoint.Element("parent")?.Attribute("link")?.Value ?? "";
+                                    if (string.IsNullOrEmpty(walkLink)) break;
+                                }
+
+                                // 视觉偏移（含 Assimp Y-Up 补偿）* fixed 链资款
+                                var vOriginEl = rootLinkEl?.Element("visual")?.Element("origin");
+                                double[] rvRpy = ParseStringArray(vOriginEl?.Attribute("rpy")?.Value, 3, new double[3]);
+                                double[] rvXyz = ParseStringArray(vOriginEl?.Attribute("xyz")?.Value, 3, new double[3]);
+                                Matrix3D visualMat = RpyToMatrix(rvRpy[0] + Math.PI / 2, rvRpy[1], rvRpy[2]);
+                                visualMat.OffsetX = rvXyz[0]; visualMat.OffsetY = rvXyz[1]; visualMat.OffsetZ = rvXyz[2];
+                                Matrix3D rootMat = visualMat * fixedChainMat;
+
+                                Application.Current.Dispatcher.Invoke(() =>
+                                {
+                                    rootModel.AddNode(rootScene.Root);
+                                    rootModel.Transform = new MatrixTransform3D(rootMat);
+                                    SceneModels.Add(rootModel);
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 4. 筛选出所有旋转关节
                 var jointElements = urdfDoc.Descendants("joint").Where(j => j.Attribute("type")?.Value == "revolute").ToList();
 
                 foreach (var jointEl in jointElements)
@@ -117,7 +187,7 @@ namespace UrToolClient.ViewModels
                     }
 
                     // 监听 UI 滑块事件
-                    joint.PropertyChanged += (s, e) => { if (e.PropertyName == nameof(RobotJoint.AngleDegree)) UpdateKinematics(); };
+                    joint.PropertyChanged += OnJointPropertyChanged;
 
                     Application.Current.Dispatcher.Invoke(() =>
                     {
@@ -125,7 +195,7 @@ namespace UrToolClient.ViewModels
                     });
                 }
 
-                // 4. 初始组装
+                // 5. 初始组装
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     UpdateKinematics();
@@ -189,6 +259,85 @@ namespace UrToolClient.ViewModels
             m.Append(my.Value);
             m.Append(mz.Value);
             return m;
+        }
+
+        /// <summary>
+        /// 将机器人实时关节角（弧度）同步到仿真模型。
+        /// 由 MainViewModel 的轮询循环在 UI 线程调用。
+        /// </summary>
+        public void ApplyJointAngles(double[] radAngles)
+        {
+            if (Joints.Count == 0 || radAngles.Length < 6) return;
+
+            static double ToDeg(double r) => r * 180.0 / Math.PI;
+
+            // 暂时解除事件监听，批量赋值后统一刷新一次运动学，避免多次重绘
+            for (int i = 0; i < Math.Min(Joints.Count, 6); i++)
+            {
+                Joints[i].PropertyChanged -= OnJointPropertyChanged;
+                Joints[i].AngleDegree = ToDeg(radAngles[i]);
+                Joints[i].PropertyChanged += OnJointPropertyChanged;
+            }
+
+            UpdateKinematics();
+        }
+
+        private void OnJointPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(RobotJoint.AngleDegree)) UpdateKinematics();
+        }
+
+        /// <summary>
+        /// 创建地面平面（Z=0），机械臂基座固定于中心点。
+        /// </summary>
+        private void AddGroundPlane()
+        {
+            const float size = 3.0f;
+            const int divisions = 20;
+            float step = size / divisions;
+            float half = size / 2f;
+
+            // 主平面
+            var builder = new MeshBuilder();
+            builder.AddQuad(
+                new Vector3(-half, -half, 0),
+                new Vector3(half, -half, 0),
+                new Vector3(half, half, 0),
+                new Vector3(-half, half, 0));
+
+            SceneModels.Add(new MeshGeometryModel3D
+            {
+                Geometry = builder.ToMeshGeometry3D(),
+                Material = PhongMaterials.Gray,
+                IsTransparent = true,
+            });
+
+            // 网格线（用多个小矩形拼接网格外观）
+            var lineColor = System.Windows.Media.Color.FromArgb(140, 150, 150, 160);
+            var lineBuilder = new MeshBuilder();
+            float lineHalf = 0.002f; // 线宽一半（m）
+            for (int i = 0; i <= divisions; i++)
+            {
+                float pos = -half + i * step;
+                // 平行 X 轴的细长矩形
+                lineBuilder.AddQuad(
+                    new Vector3(-half, pos - lineHalf, 0.001f),
+                    new Vector3(half, pos - lineHalf, 0.001f),
+                    new Vector3(half, pos + lineHalf, 0.001f),
+                    new Vector3(-half, pos + lineHalf, 0.001f));
+                // 平行 Y 轴的细长矩形
+                lineBuilder.AddQuad(
+                    new Vector3(pos - lineHalf, -half, 0.001f),
+                    new Vector3(pos + lineHalf, -half, 0.001f),
+                    new Vector3(pos + lineHalf, half, 0.001f),
+                    new Vector3(pos - lineHalf, half, 0.001f));
+            }
+            SceneModels.Add(new MeshGeometryModel3D
+            {
+                Geometry = lineBuilder.ToMeshGeometry3D(),
+                Material = PhongMaterials.LightGray,
+                IsTransparent = true,
+            });
         }
 
         private double[] ParseStringArray(string? input, int expectedLength, double[] defaultValues)
